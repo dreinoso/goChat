@@ -1,16 +1,17 @@
 package main
 
 import (
-	"net"
-	"os/exec"
-	"fmt"
 	"bufio"
+	"fmt"
+	"net"
 	"os"
+	"os/exec"
+	"os/signal"
 	"strconv"
 	"strings"
 )
 
-const defaultPort = "8080"
+const defaultPort = "8082"
 const defaultIP = "127.0.0.1"
 const addressConnector = ":"
 const senderPrefix = "Me: "
@@ -40,21 +41,16 @@ func main() {
 	textChannel := make(chan string)
 	messageReceivedFlag := make(chan bool)
 
-	defer func() {
-		close(textChannel)
-		close(messageReceivedFlag)
-		connection.Close()
-		listener.Close()
-	}()
-
+	go closeResources(listener, connection)
 	go receiveMessages(connection, messageReceivedFlag)
 	go printCurrentText(textChannel, messageReceivedFlag)
 
 	// disable input buffering to be able to read one char at the time, it's
 	// needed to be able caching the characters writen when receiving a message
 	exec.Command("stty", "-F", "/dev/tty", "cbreak", "min", "1").Run()
-	// do not display entered characters on the screen
-	exec.Command("stty", "-F", "/dev/tty", "-echo").Run()
+
+	fmt.Println("To close correctly gochat, use CTRL + C ... ")
+	fmt.Println()
 
 	// read from console and send messages
 	var byteRead = make([]byte, 1)
@@ -63,7 +59,6 @@ func main() {
 		os.Stdin.Read(byteRead)
 		var inputMessage string
 		for ( string(byteRead) != "\n") {
-			fmt.Print(string(byteRead))
 			textChannel <- string(byteRead)
 			inputMessage += string(byteRead)
 			os.Stdin.Read(byteRead)
@@ -73,7 +68,6 @@ func main() {
 		fmt.Fprintf(connection, inputMessage + "\n")
 		inputMessage = ""
 		messageReceivedFlag <- false
-		fmt.Println()
 	}
 }
 
@@ -140,6 +134,16 @@ func printCurrentText(textChannel chan string, messageReceivedFlag chan bool) {
 		default:
 		}
 	}
+}
+
+func closeResources(listener net.Listener, connection net.Conn) {
+	signalChan := make(chan os.Signal, 1)
+	signal.Notify(signalChan, os.Interrupt)
+	<-signalChan
+	if listener != nil { listener.Close() }
+	if connection != nil { connection.Close() }
+	fmt.Println("Program has been interrupted, closing resources...")
+	os.Exit(0)
 }
 
 func exitProgram() {
